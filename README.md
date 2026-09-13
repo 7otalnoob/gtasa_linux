@@ -47,8 +47,10 @@ ports/
 The launcher sources PortMaster's `control.txt`, imports its controller
 mapping, requires an AArch64 device, runs `pm_platform_helper`, and finishes
 through `pm_finish`. It writes `gtasa/log.txt` for frontend launches. The
-complete Android-package asset inventory and split/asset-pack extraction guide
-is in [ASSET_PREPARATION.md](ASSET_PREPARATION.md).
+recommended Android extraction workflow is the
+[GTAExtractor helper app](https://github.com/RyouVC/GTAExtractor/). The complete
+asset inventory and advanced manual extraction guide are in
+[ASSET_PREPARATION.md](ASSET_PREPARATION.md).
 
 `libs.aarch64/libSDL3.so.0` is built from the SDL3-to-SDL2 backend fork. It
 loads the device's system `libSDL2-2.0.so.0` dynamically so PortMaster systems

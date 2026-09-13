@@ -1,5 +1,25 @@
 # Extracting a purchased Play Store copy from an existing Android install
 
+## Recommended: GTAExtractor
+
+Use the [GTAExtractor helper app](https://github.com/RyouVC/GTAExtractor/)
+instead of manually traversing Android package and asset-pack paths.
+
+1. Download the latest release of GTAExtractor.
+2. Make sure GTA: San Andreas is installed on the Android device and has been
+   launched at least once so its downloadable data is present.
+3. Open GTAExtractor, optionally enable audio extraction, select the output
+   folder, and start extraction.
+   Audio extraction requires root access because Android stores the downloaded
+   audio packs under the game's private data directory.
+4. Wait for extraction to finish, then use the generated game files to populate
+   the `gtasa/` directory in the PortMaster tree described below.
+
+GTAExtractor is maintained separately from this repository. Check its README
+and releases for the current Android compatibility and output details.
+
+## Advanced fallback: manual ADB extraction
+
 Google Play normally installs GTA: San Andreas as a split APK set rather than
 one standalone APK. Use ADB against the Android installation containing your
 purchased copy. First select the device explicitly if more than one appears in
