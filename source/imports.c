@@ -218,6 +218,7 @@ static EGLDisplay g_sdl_egl_display;
 static EGLConfig g_sdl_egl_config;
 static EGLSurface g_sdl_egl_surface;
 static EGLContext g_sdl_egl_context;
+static bool g_sdl_native_context;
 
 void linux_set_sdl_context(SDL_Window *window, void *context) {
   g_sdl_window = window;
@@ -226,9 +227,13 @@ void linux_set_sdl_context(SDL_Window *window, void *context) {
   g_sdl_egl_config = (EGLConfig)SDL_EGL_GetCurrentConfig();
   g_sdl_egl_surface = (EGLSurface)SDL_EGL_GetWindowSurface(window);
   g_sdl_egl_context = (EGLContext)SDL_GL_GetCurrentContext();
+  const char *video_driver = SDL_GetCurrentVideoDriver();
+  g_sdl_native_context = video_driver && strcmp(video_driver, "sdl2") != 0;
   debugPrintf("EGL: SDL handles display=%p config=%p surface=%p context=%p\n",
               (void *)g_sdl_egl_display, (void *)g_sdl_egl_config,
               (void *)g_sdl_egl_surface, (void *)g_sdl_egl_context);
+  debugPrintf("EGL: SDL video driver=%s native=%d\n",
+              video_driver ? video_driver : "unknown", g_sdl_native_context);
 }
 
 static unsigned int eglSwapBuffers_cache(void *display, void *surface) {
@@ -310,6 +315,10 @@ static EGLSurface eglCreateWindowSurface_trace(EGLDisplay dpy, EGLConfig config,
 static EGLBoolean eglMakeCurrent_dedup(EGLDisplay dpy, EGLSurface draw,
                                        EGLSurface read, EGLContext ctx) {
   (void)dpy; (void)read;
+  if (g_sdl_native_context) {
+    debugPrintf("EGL: native SDL context transition ignored\n");
+    return EGL_TRUE;
+  }
   const SDL_GLContext target = (ctx == EGL_NO_CONTEXT || draw == EGL_NO_SURFACE)
       ? NULL : g_sdl_context;
   EGLBoolean ok = SDL_GL_MakeCurrent(g_sdl_window, target);
