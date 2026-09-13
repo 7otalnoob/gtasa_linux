@@ -214,10 +214,21 @@ static void glDeleteProgram_c(GLuint p) {
 extern unsigned int eglSwapBuffersHook(void *display, void *surface);
 static SDL_Window *g_sdl_window;
 static SDL_GLContext g_sdl_context;
+static EGLDisplay g_sdl_egl_display;
+static EGLConfig g_sdl_egl_config;
+static EGLSurface g_sdl_egl_surface;
+static EGLContext g_sdl_egl_context;
 
 void linux_set_sdl_context(SDL_Window *window, void *context) {
   g_sdl_window = window;
   g_sdl_context = context;
+  g_sdl_egl_display = (EGLDisplay)SDL_EGL_GetCurrentDisplay();
+  g_sdl_egl_config = (EGLConfig)SDL_EGL_GetCurrentConfig();
+  g_sdl_egl_surface = (EGLSurface)SDL_EGL_GetWindowSurface(window);
+  g_sdl_egl_context = (EGLContext)SDL_GL_GetCurrentContext();
+  debugPrintf("EGL: SDL handles display=%p config=%p surface=%p context=%p\n",
+              (void *)g_sdl_egl_display, (void *)g_sdl_egl_config,
+              (void *)g_sdl_egl_surface, (void *)g_sdl_egl_context);
 }
 
 static unsigned int eglSwapBuffers_cache(void *display, void *surface) {
@@ -235,7 +246,10 @@ static unsigned int eglSwapBuffers_cache(void *display, void *surface) {
 static EGLDisplay eglGetDisplay_trace(EGLNativeDisplayType native) {
   debugPrintf("EGL: eglGetDisplay(%p)\n", native);
   EGLDisplay dpy;
-  if (native == EGL_DEFAULT_DISPLAY) {
+  if (native == EGL_DEFAULT_DISPLAY && g_sdl_egl_display) {
+    dpy = g_sdl_egl_display;
+    debugPrintf("EGL: using SDL-owned display\n");
+  } else if (native == EGL_DEFAULT_DISPLAY) {
     // KMSDRM/GBM does not necessarily make EGL_DEFAULT_DISPLAY usable. SDL
     // already opened and initialized the platform display for its GL context.
     dpy = (EGLDisplay)(uintptr_t)1;
@@ -262,10 +276,11 @@ static EGLBoolean eglChooseConfig_trace(EGLDisplay dpy, const EGLint *attrs,
                                          EGLConfig *configs, EGLint size,
                                          EGLint *count) {
   debugPrintf("EGL: eglChooseConfig(%p, size=%d)\n", dpy, size);
-  (void)dpy;
   (void)attrs;
   if (count) *count = size > 0 ? 1 : 4;
-  if (configs && size > 0) configs[0] = (EGLConfig)(uintptr_t)1;
+  if (configs && size > 0)
+    configs[0] = dpy == g_sdl_egl_display && g_sdl_egl_config
+        ? g_sdl_egl_config : (EGLConfig)(uintptr_t)1;
   EGLBoolean ok = EGL_TRUE;
   debugPrintf("EGL: eglChooseConfig -> %d (count=%d, err=0x%x)\n", ok,
               count ? *count : 0, eglGetError());
@@ -274,18 +289,22 @@ static EGLBoolean eglChooseConfig_trace(EGLDisplay dpy, const EGLint *attrs,
 
 static EGLContext eglCreateContext_trace(EGLDisplay dpy, EGLConfig config,
                                           EGLContext share, const EGLint *attrs) {
-  (void)dpy; (void)config; (void)share; (void)attrs;
-  debugPrintf("EGL: eglCreateContext -> sentinel\n");
-  return (EGLContext)(uintptr_t)1;
+  (void)config; (void)share; (void)attrs;
+  EGLContext context = dpy == g_sdl_egl_display && g_sdl_egl_context
+      ? g_sdl_egl_context : (EGLContext)(uintptr_t)1;
+  debugPrintf("EGL: eglCreateContext -> %p\n", (void *)context);
+  return context;
 }
 
 static EGLSurface eglCreateWindowSurface_trace(EGLDisplay dpy, EGLConfig config,
                                                 EGLNativeWindowType native,
                                                 const EGLint *attrs) {
-  (void)dpy; (void)config; (void)native; (void)attrs;
-  debugPrintf("EGL: eglCreateWindowSurface -> sentinel (window=%p)\n",
-              (void *)g_sdl_window);
-  return (EGLSurface)(uintptr_t)1;
+  (void)config; (void)native; (void)attrs;
+  EGLSurface surface = dpy == g_sdl_egl_display && g_sdl_egl_surface
+      ? g_sdl_egl_surface : (EGLSurface)(uintptr_t)1;
+  debugPrintf("EGL: eglCreateWindowSurface -> %p (window=%p)\n",
+              (void *)surface, (void *)g_sdl_window);
+  return surface;
 }
 
 static EGLBoolean eglMakeCurrent_dedup(EGLDisplay dpy, EGLSurface draw,
