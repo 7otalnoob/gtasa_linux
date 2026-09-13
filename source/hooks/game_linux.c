@@ -22,6 +22,7 @@
 #include "../util.h"
 
 extern so_module game_mod;
+extern void linux_release_sdl_context(void);
 
 
 
@@ -35,6 +36,8 @@ static void *game_thread_start(void *arg) {
   GameThreadStart start = *(GameThreadStart *)arg;
   free(arg);
   pthread_setname_np(pthread_self(), start.name);
+  if (strcmp(start.name, "RenderQueue") == 0)
+    linux_release_sdl_context();
   thread_registry_add();
   /* Leave glibc's thread pointer intact. The game obtains JNIEnv through the
    * hook below and pthread TLS through our Bionic import adapters. */

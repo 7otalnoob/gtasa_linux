@@ -220,6 +220,20 @@ static EGLSurface g_sdl_egl_surface;
 static EGLContext g_sdl_egl_context;
 static bool g_sdl_native_context;
 
+static bool is_render_queue_thread(void) {
+  char name[16] = {0};
+  pthread_getname_np(pthread_self(), name, sizeof(name));
+  return strcmp(name, "RenderQueue") == 0;
+}
+
+void linux_release_sdl_context(void) {
+  if (!g_sdl_native_context || !g_sdl_window)
+    return;
+  bool ok = SDL_GL_MakeCurrent(g_sdl_window, NULL);
+  debugPrintf("EGL: release main SDL context before RenderQueue: %d: %s\n",
+              ok, ok ? "ok" : SDL_GetError());
+}
+
 void linux_set_sdl_context(SDL_Window *window, void *context) {
   g_sdl_window = window;
   g_sdl_context = context;
@@ -315,7 +329,7 @@ static EGLSurface eglCreateWindowSurface_trace(EGLDisplay dpy, EGLConfig config,
 static EGLBoolean eglMakeCurrent_dedup(EGLDisplay dpy, EGLSurface draw,
                                        EGLSurface read, EGLContext ctx) {
   (void)dpy; (void)read;
-  if (g_sdl_native_context) {
+  if (g_sdl_native_context && !is_render_queue_thread()) {
     debugPrintf("EGL: native SDL context transition ignored\n");
     return EGL_TRUE;
   }

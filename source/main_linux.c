@@ -26,6 +26,8 @@
 #include "so_util.h"
 #include "util.h"
 
+extern void linux_release_sdl_context(void);
+
 #ifndef GTASA_PRODUCT_NAME
 #define GTASA_PRODUCT_NAME "Grand Theft Auto: San Andreas"
 #endif
@@ -256,6 +258,7 @@ int main(void) {
   debugPrintf("lifecycle: implOnResume\n");
   ((void (*)(void *, void *))implOnResume)(fake_env, gn);
   debugPrintf("lifecycle: implOnResume returned\n");
+  linux_release_sdl_context();
 
   if (linux_input_init(&game_mod) < 0)
     fatal_error("Could not initialize the native SDL gamepad interface");
