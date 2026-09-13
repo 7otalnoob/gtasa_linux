@@ -65,7 +65,7 @@ build_game() {
     local build_dir="build-${GAME}-portmaster"
     cmake -S /workspace -B "/workspace/$build_dir" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
-        -DGTASA_DEBUG_LOG=OFF -DGTASA_QUIT_CHORD=ON -DGTASA_SDL2_SHIM=ON \
+        -DGTASA_DEBUG_LOG="${GTASA_DEBUG_LOG:-OFF}" -DGTASA_QUIT_CHORD=ON -DGTASA_SDL2_SHIM=ON \
         -DGTASA_PRODUCT_NAME="$GAME_TITLE" -DGTASA_CONFIG_NAME="$CONFIG_NAME" \
         -DGTASA_APPSTATE_NAME="$APPSTATE_NAME" -DGAME_BINARY_NAME="$BINARY_NAME"
     cmake --build "/workspace/$build_dir" --parallel "${JOBS:-2}"
