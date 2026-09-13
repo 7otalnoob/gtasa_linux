@@ -13,7 +13,6 @@ RUN apt-get update && \
         libxkbcommon-dev \
         libdrm-dev \
         libgbm-dev \
-        libpipewire-0.3-dev \
         libpulse-dev \
         libasound2-dev \
         wayland-protocols && \
