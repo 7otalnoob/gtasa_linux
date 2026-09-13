@@ -7,7 +7,16 @@ WORKDIR /workspace
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        libmpg123-dev && \
+        libmpg123-dev \
+        libx11-dev \
+        libwayland-dev \
+        libxkbcommon-dev \
+        libdrm-dev \
+        libgbm-dev \
+        libpipewire-0.3-dev \
+        libpulse-dev \
+        libasound2-dev \
+        wayland-protocols && \
     rm -rf /var/lib/apt/lists/*
 
 FROM portmaster-base AS game-build
