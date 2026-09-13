@@ -11,6 +11,7 @@ RUN apt-get update && \
         libx11-dev \
         libwayland-dev \
         libxkbcommon-dev \
+        libxtst-dev \
         libdrm-dev \
         libgbm-dev \
         libpulse-dev \
