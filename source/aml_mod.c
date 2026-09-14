@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "aml_mod.h"
+#include "imports.h" // dynlib_functions/dynlib_numfunctions
 #include "util.h"
 
 #define AML_MAX_MODULES 32
@@ -35,22 +36,36 @@ typedef struct {
 static aml_module g_modules[AML_MAX_MODULES];
 static size_t g_module_count;
 
+// Real-world AML mods (as distributed/downloaded) are ordinary ARM64 shared
+// objects: ET_DYN, several PT_LOAD segments, a PT_DYNAMIC segment with their
+// own imports/relocations -- the same shape as game_mod/donor_mod. load_one()
+// relocates and resolves those the normal way. Some other AML variant may
+// ship a flat, statically-linked, single-segment, no-relocations blob
+// instead (ET_EXEC, exactly one PT_LOAD, no PT_DYNAMIC/PT_INTERP/PT_TLS);
+// that shape is still accepted too and just gets mprotect'd RWX as before.
 static int is_aml_image(const so_module *mod) {
-  int loads = 0;
-  if (mod->elf_hdr->e_type != ET_EXEC ||
-      mod->elf_hdr->e_machine != EM_AARCH64)
+  if (mod->elf_hdr->e_machine != EM_AARCH64)
     return 0;
-  for (int i = 0; i < mod->phnum; i++) {
-    const Elf64_Phdr *p = &mod->phdr[i];
-    if (p->p_type == PT_LOAD) {
-      loads++;
-      if (p->p_offset != 0 || p->p_vaddr != 0 || p->p_filesz > mod->so_size)
+
+  if (mod->elf_hdr->e_type == ET_DYN)
+    return 1;
+
+  if (mod->elf_hdr->e_type == ET_EXEC) {
+    int loads = 0;
+    for (int i = 0; i < mod->phnum; i++) {
+      const Elf64_Phdr *p = &mod->phdr[i];
+      if (p->p_type == PT_LOAD) {
+        loads++;
+        if (p->p_offset != 0 || p->p_vaddr != 0 || p->p_filesz > mod->so_size)
+          return 0;
+      } else if (p->p_type == PT_DYNAMIC || p->p_type == PT_INTERP ||
+                 p->p_type == PT_TLS)
         return 0;
-    } else if (p->p_type == PT_DYNAMIC || p->p_type == PT_INTERP ||
-               p->p_type == PT_TLS)
-      return 0;
+    }
+    return loads == 1;
   }
-  return loads == 1;
+
+  return 0;
 }
 
 static int has_suffix(const char *name, const char *suffix) {
@@ -76,11 +91,25 @@ static int load_one(const char *path) {
     return -1;
   }
 
-  if (mprotect(module->so.load_base, module->so.load_size,
-               PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-    debugPrintf("AML: mprotect failed for %s: %s\n", path, strerror(errno));
-    so_unload(&module->so);
-    return -1;
+  if (module->so.elf_hdr->e_type == ET_DYN) {
+    // Ordinary shared object: relocate and resolve like any other module.
+    // Imports may bind against libGame.so's own exports -- so_resolve_symbol()
+    // already scans every loaded module (game_mod is in so_list by now), so
+    // that "just works" the same way donor_mod's do.
+    so_relocate(&module->so);
+    so_resolve(&module->so, dynlib_functions, dynlib_numfunctions, 1);
+    so_finalize(&module->so);
+    so_flush_caches(&module->so);
+    so_execute_init_array(&module->so);
+    so_free_temp(&module->so);
+  } else {
+    // Flat static blob: no relocations to process, just make it executable.
+    if (mprotect(module->so.load_base, module->so.load_size,
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+      debugPrintf("AML: mprotect failed for %s: %s\n", path, strerror(errno));
+      so_unload(&module->so);
+      return -1;
+    }
   }
 
   aml_get_info_fn get_info = (aml_get_info_fn)
@@ -143,7 +172,7 @@ void aml_load_mods(const char *directory, so_module *game) {
       }
   for (size_t i = 0; i < count; i++) {
     char path[PATH_MAX];
-    if (snprintf(path, sizeof(path), "%s/%s", directory, names[i]) <
+    if (snprintf(path, sizeof(path), "%s/%s", directory, names[i]) 
         (int)sizeof(path))
       load_one(path);
     free(names[i]);
