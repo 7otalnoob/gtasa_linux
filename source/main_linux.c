@@ -182,7 +182,10 @@ void hard_exit(void) {
   linux_input_shutdown();
   thread_registry_pause_others();
   deinit_openal();
-  exit(0);
+  /* The Android game leaves worker threads running. POSIX has no safe
+   * equivalent to the Switch thread-freeze path, so exit() would run
+   * atexit/SDL/OpenAL destructors concurrently with live game threads. */
+  _exit(0);
 }
 
 int main(void) {
