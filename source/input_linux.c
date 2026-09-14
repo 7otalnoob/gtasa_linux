@@ -42,12 +42,21 @@ static const SDL_GamepadButton buttons[BUTTONS] = {
   SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK
 };
 
+/* The Android TV payload uses native slot 15 for physical Minus/Select.
+ * Keep this translation separate from SDL's logical button positions.
+ */
+static const int native_button_ids[BUTTONS] = {
+  0, 1, 2, 3, 4, 15, 6, 7, 8, 9, 10, 11, 12, 13
+};
+
 static void send_button(int pad, int button, bool down) {
   if (pads[pad].held[button] == down) return;
   pads[pad].held[button] = down;
-  (down ? button_down : button_up)(fake_env, NULL, pad, button);
-  if (trace) fprintf(stderr, "input: pad=%d button=%d %s\n",
-                     pad, button, down ? "down" : "up");
+  (down ? button_down : button_up)(fake_env, NULL, pad,
+                                   native_button_ids[button]);
+  if (trace) fprintf(stderr, "input: pad=%d button=%d native=%d %s\n",
+                     pad, button, native_button_ids[button],
+                     down ? "down" : "up");
 
 }
 

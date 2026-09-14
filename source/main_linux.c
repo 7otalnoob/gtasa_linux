@@ -16,6 +16,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "aml_mod.h"
 #include "config.h"
 #include "audio_linux.h"
 #include "error.h"
@@ -230,6 +231,7 @@ int main(void) {
   if (have_cxx_donor)
     so_free_temp(&donor_mod);
   so_free_temp(&game_mod);
+  aml_load_mods("mods", &game_mod);
 
   jni_init();
   JNI_OnLoad(fake_vm, NULL);

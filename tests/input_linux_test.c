@@ -8,9 +8,13 @@ void *fake_env;
 volatile int jni_quit_requested;
 static int native_count, down_calls, up_calls, resume_calls;
 static bool connected_slots[4];
-static bool held[4][14];
+static bool held[4][16];
 static float axes[4][6];
 static bool missing;
+static const int expected_native_buttons[14] = {
+  0, 1, 2, 3, 4, 15, 6, 7, 8, 9, 10, 11, 12, 13
+};
+
 
 static void set_count(void *env, void *obj, int n) {
   (void)env; (void)obj;
@@ -35,14 +39,14 @@ static void resume(void *env, void *obj) {
 }
 static void down(void *env, void *obj, int p, int b) {
   (void)env; (void)obj;
-  assert(p >= 0 && p < native_count && b >= 0 && b < 14);
+  assert(p >= 0 && p < native_count && b >= 0 && b < 16);
   assert(!held[p][b]);
   held[p][b] = true;
   down_calls++;
 }
 static void up(void *env, void *obj, int p, int b) {
   (void)env; (void)obj;
-  assert(p >= 0 && p < native_count && b >= 0 && b < 14);
+  assert(p >= 0 && p < native_count && b >= 0 && b < 16);
   assert(held[p][b]);
   held[p][b] = false;
   up_calls++;
@@ -107,9 +111,9 @@ int main(void) {
   };
   for (int b = 0; b < 14; b++) {
     assert(SDL_SetJoystickVirtualButton(joystick, map[b], true));
-    pump(); assert(held[0][b]);
+    pump(); assert(held[0][expected_native_buttons[b]]);
     assert(SDL_SetJoystickVirtualButton(joystick, map[b], false));
-    pump(); assert(!held[0][b]);
+    pump(); assert(!held[0][expected_native_buttons[b]]);
   }
   assert(down_calls == 14 && up_calls == 14);
   jni_quit_requested = 0;

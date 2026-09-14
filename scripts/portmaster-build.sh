@@ -36,6 +36,11 @@ prepare() {
 
 build_shim() {
     prepare
+    if ! git -C "$BUILD_ROOT/SDL" apply --reverse --check \
+        /workspace/patches/sdl2-explicit-controller-config.patch >/dev/null 2>&1; then
+        git -C "$BUILD_ROOT/SDL" apply \
+            /workspace/patches/sdl2-explicit-controller-config.patch
+    fi
     cmake -S "$BUILD_ROOT/SDL" -B "$BUILD_ROOT/SDL-build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$BUILD_ROOT/sysroot" \
         -DSDL_SDL2_BACKEND=ON -DSDL_SPIRV_CROSS_DIR="$BUILD_ROOT/SPIRV-Cross" \

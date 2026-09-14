@@ -1,0 +1,35 @@
+diff --git a/src/joystick/sdl2/SDL_sdl2joystick.c b/src/joystick/sdl2/SDL_sdl2joystick.c
+--- a/src/joystick/sdl2/SDL_sdl2joystick.c
++++ b/src/joystick/sdl2/SDL_sdl2joystick.c
+@@ -59,3 +59,4 @@
+ static int (*sdl2joy_IsGameController)(int joystick_index);
++static int (*sdl2joy_GameControllerAddMapping)(const char *mapping_string);
+ static char *(*sdl2joy_GameControllerMappingForDeviceIndex)(int joystick_index);
+ static void (*sdl2joy_free)(void *mem);
+@@ -104,4 +105,5 @@
+     LOAD_SDL2_JOY(sdl2joy_GetError, SDL_GetError);
+     LOAD_SDL2_JOY(sdl2joy_IsGameController, SDL_IsGameController);
++    LOAD_SDL2_JOY(sdl2joy_GameControllerAddMapping, SDL_GameControllerAddMapping);
+     LOAD_SDL2_JOY(sdl2joy_GameControllerMappingForDeviceIndex, SDL_GameControllerMappingForDeviceIndex);
+     LOAD_SDL2_JOY(sdl2joy_free, SDL_free);
+@@ -159,5 +161,20 @@
+                             sdl2joy_GetError ? sdl2joy_GetError() : "unknown");
+     }
+ 
++    /* Inject the caller's mappings explicitly; SDL2 builds differ in when
++     * they consume SDL_GAMECONTROLLERCONFIG during SDL_Init. */
++    const char *config = SDL_getenv("SDL_GAMECONTROLLERCONFIG");
++    if (config && *config && sdl2joy_GameControllerAddMapping) {
++        char *mapping = SDL_strdup(config);
++        if (mapping) {
++            char *saveptr = NULL;
++            for (char *line = SDL_strtok_r(mapping, "\n", &saveptr);
++                 line; line = SDL_strtok_r(NULL, "\n", &saveptr)) {
++                if (*line) sdl2joy_GameControllerAddMapping(line);
++            }
++            SDL_free(mapping);
++        }
++    }
++
+     SDL_zero(s_joysticks);
+     s_num_joysticks = 0;
