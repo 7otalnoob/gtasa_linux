@@ -23,6 +23,7 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <ctype.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
@@ -419,6 +420,48 @@ int __android_log_vprint(int prio, const char *tag, const char *fmt, va_list va)
   return 0;
 }
 
+// AML-style mods resolve the game image with dlopen()/dlsym() at runtime
+// (by "libGame.so" or, on APKs built off the older v2.10-era GSG tree,
+// "libGTASA.so") instead of linking against it, so so_relocate() never sees
+// those calls. so_load() maps the game into our own address space without
+// registering it with the system dynamic linker, so a real dlopen() for
+// either name would fail; hand back a sentinel handle instead and resolve
+// symbols against game_mod's own symbol table via so_find_addr. Anything
+// else falls through to the real libc dlopen/dlsym/dlclose so a mod can
+// still pull in genuine system libraries if it needs to.
+extern so_module game_mod;
+#define GAME_SO_HANDLE ((void *)&game_mod)
+
+static int is_game_so_name(const char *filename) {
+  if (!filename)
+    return 0;
+  const char *base = strrchr(filename, '/');
+  base = base ? base + 1 : filename;
+  return strcmp(base, SO_NAME) == 0 || strcmp(base, "libGTASA.so") == 0;
+}
+
+void *dlopen_fake(const char *filename, int flags) {
+  if (is_game_so_name(filename))
+    return GAME_SO_HANDLE;
+  return dlopen(filename, flags);
+}
+
+void *dlsym_fake(void *handle, const char *symbol) {
+  if (handle == GAME_SO_HANDLE)
+    return (void *)so_try_find_addr_rx(&game_mod, symbol);
+  return dlsym(handle, symbol);
+}
+
+int dlclose_fake(void *handle) {
+  if (handle == GAME_SO_HANDLE)
+    return 0;
+  return dlclose(handle);
+}
+
+char *dlerror_fake(void) {
+  return dlerror();
+}
+
 // pthread stuff
 // have to wrap it since struct sizes are different
 
@@ -652,6 +695,13 @@ DynLibFunction dynlib_functions[] = {
   { "__cxa_thread_atexit_impl", (uintptr_t)&__cxa_thread_atexit_impl_fake },
 
   { "stderr", (uintptr_t)&stderr_fake },
+
+  // AML mods dlopen() the game image by name at runtime; redirect to
+  // game_mod instead of the real dynamic linker (see dlopen_fake above).
+  { "dlopen", (uintptr_t)&dlopen_fake },
+  { "dlsym", (uintptr_t)&dlsym_fake },
+  { "dlclose", (uintptr_t)&dlclose_fake },
+  { "dlerror", (uintptr_t)&dlerror_fake },
 
   // AAssets are emulated over regular files relative to the game dir
   { "AAssetManager_open", (uintptr_t)&AAssetManager_open_fake },

@@ -1,0 +1,65 @@
+--- gtasa_linux-main/source/aml_mod.c	2026-09-15 14:29:23.000000000 +0000
++++ gtasa_linux-patched/source/aml_mod.c	2026-09-15 23:44:15.660896827 +0000
+@@ -12,6 +12,7 @@
+ #include <unistd.h>
+ 
+ #include "aml_mod.h"
++#include "imports.h"
+ #include "util.h"
+ 
+ #define AML_MAX_MODULES 32
+@@ -35,22 +36,20 @@
+ static aml_module g_modules[AML_MAX_MODULES];
+ static size_t g_module_count;
+ 
++// Real AML mods (unlike the flat ET_EXEC images this originally assumed)
++// are ordinary Android shared objects: ET_DYN, with a PT_DYNAMIC segment,
++// linked against libc/libm/libdl/liblog and relocated the same way as the
++// game image itself. PT_INTERP (a dynamic executable, not a library) and
++// PT_TLS (ELF thread-locals; unsupported by so_relocate) are still rejected.
+ static int is_aml_image(const so_module *mod) {
+-  int loads = 0;
+-  if (mod->elf_hdr->e_type != ET_EXEC ||
+-      mod->elf_hdr->e_machine != EM_AARCH64)
++  if (mod->elf_hdr->e_type != ET_DYN || mod->elf_hdr->e_machine != EM_AARCH64)
+     return 0;
+   for (int i = 0; i < mod->phnum; i++) {
+     const Elf64_Phdr *p = &mod->phdr[i];
+-    if (p->p_type == PT_LOAD) {
+-      loads++;
+-      if (p->p_offset != 0 || p->p_vaddr != 0 || p->p_filesz > mod->so_size)
+-        return 0;
+-    } else if (p->p_type == PT_DYNAMIC || p->p_type == PT_INTERP ||
+-               p->p_type == PT_TLS)
++    if (p->p_type == PT_INTERP || p->p_type == PT_TLS)
+       return 0;
+   }
+-  return loads == 1;
++  return 1;
+ }
+ 
+ static int has_suffix(const char *name, const char *suffix) {
+@@ -76,12 +75,17 @@
+     return -1;
+   }
+ 
+-  if (mprotect(module->so.load_base, module->so.load_size,
+-               PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+-    debugPrintf("AML: mprotect failed for %s: %s\n", path, strerror(errno));
+-    so_unload(&module->so);
+-    return -1;
+-  }
++  // Same pipeline main_linux.c runs for the game image itself: resolve
++  // undefined imports (libc/libm/libdl/liblog, plus our dlopen/dlsym shim
++  // and, for anything the mod calls directly on the game, game_mod's own
++  // exports via cross-module lookup), lay down final page protections, then
++  // run the mod's C++ static initializers.
++  so_relocate(&module->so);
++  so_resolve(&module->so, dynlib_functions, dynlib_numfunctions, 1);
++  so_finalize(&module->so);
++  so_flush_caches(&module->so);
++  so_execute_init_array(&module->so);
++  so_free_temp(&module->so);
+ 
+   aml_get_info_fn get_info = (aml_get_info_fn)
+       so_try_find_addr_rx(&module->so, "__GetModInfo");
