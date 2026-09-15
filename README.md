@@ -112,20 +112,36 @@ persistent cross-build and hardware-testing workflow.
 
 ### Binary release package
 
-After the AArch64 build and vendored runtime files are present, create a
-reproducible drop-in tarball with:
+After the AArch64 build and vendored runtime files are present, create an
+auto-installable PortMaster archive with:
 
 ```sh
 scripts/package-linux.sh 1.0.0
 ```
 
-This writes `dist/gtasa-linux-1.0.0.tar.gz` and a `.sha256` sidecar. The archive
-contains the launcher, `gtasa_linux`, `libs.aarch64/libSDL3.so.0`, the vendored Android NDK C++
-runtime, and the 120-entry `assetfile.txt` manifest. It deliberately does not
-contain `libGame.so` or proprietary game assets; those are added from the
-matching official Android package during installation. The default package also
-includes the existing `Adjustable.cfg` console-style HUD layout. Set
-`GTASA_CONSOLE_UI=0` when invoking the packager to omit it.
+This writes `dist/gtasa-1.0.0.zip` and a `.sha256` sidecar using the checked-in
+PortMaster metadata under `portmaster/gtasa/`. Its top-level archive layout is:
+
+```text
+gtasa/
+├── port.json
+├── README.md
+├── screenshot.png
+├── gameinfo.xml
+├── Grand Theft Auto San Andreas.sh
+└── gtasa/
+    ├── licenses/
+    ├── gtasa_linux
+    ├── libs.aarch64/libSDL3.so.0
+    ├── libc++_shared.so
+    ├── assetfile.txt
+    └── Adjustable.cfg
+```
+
+The archive deliberately does not contain `libGame.so` or proprietary game
+assets; those are added from the matching official Android package during
+installation. Set `GTASA_CONSOLE_UI=0` when invoking the packager to omit
+`Adjustable.cfg`.
 
 ## Installation
 
