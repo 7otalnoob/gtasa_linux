@@ -117,11 +117,37 @@ static int load_one(const char *path) {
   return 0;
 }
 
+// so_finalize() deliberately leaves the game's PF_X segments RX and never
+// asks Linux for writable+executable memory. AML mods, however, are built
+// against Android's loader, where AML itself leaves the game image writable,
+// so they patch instructions in place without calling mprotect first (most
+// of them do not even import it). Re-arm those segments as RWX before any
+// mod runs, or the first patch write faults and takes the process down
+// before the game loop starts. Failure is not fatal: a hardened kernel that
+// refuses W^X simply means code-patching mods will not work.
+static void unprotect_game_text(so_module *game) {
+  if (!game || !game->load_virtbase)
+    return;
+  for (int i = 0; i < game->phnum; i++) {
+    const Elf64_Phdr *p = &game->phdr[i];
+    if (p->p_type != PT_LOAD || (p->p_flags & PF_X) != PF_X)
+      continue;
+    uintptr_t start = (uintptr_t)game->load_virtbase + p->p_vaddr;
+    uintptr_t end = ALIGN_MEM(start + p->p_memsz, 0x1000);
+    start &= ~(uintptr_t)0xfff;
+    if (mprotect((void *)start, end - start,
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+      debugPrintf("AML: mprotect RWX on game text failed: %s "
+                  "(code-patching mods will crash)\n", strerror(errno));
+  }
+}
+
 void aml_load_mods(const char *directory, so_module *game) {
-  (void)game;
   const char *enabled = getenv("GTASA_AML_MODS");
   if (enabled && (!strcmp(enabled, "0") || !strcmp(enabled, "false")))
     return;
+
+  unprotect_game_text(game);
 
   DIR *dir = opendir(directory);
   if (!dir)

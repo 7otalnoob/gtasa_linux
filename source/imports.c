@@ -25,6 +25,7 @@
 #include <ctype.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <math.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -462,6 +463,40 @@ char *dlerror_fake(void) {
   return dlerror();
 }
 
+// Mods that do call mprotect() pass unaligned addresses, since bionic's
+// mprotect tolerates that on some paths; glibc returns EINVAL instead.
+int mprotect_fake(void *addr, size_t len, int prot) {
+  uintptr_t start = (uintptr_t)addr & ~(uintptr_t)0xfff;
+  uintptr_t end = ALIGN_MEM((uintptr_t)addr + len, 0x1000);
+  return mprotect((void *)start, end - start, prot);
+}
+
+// libandroid.so's sensor API, used by JPatch for its tilt/gyro handling.
+// There is no Android sensor service here, so report that no sensor exists;
+// JPatch checks for NULL and skips the feature instead of crashing.
+static void *ASensorManager_getInstance_fake(void) { return NULL; }
+static void *ASensorManager_getDefaultSensor_fake(void *m, int t) {
+  (void)m; (void)t; return NULL;
+}
+static void *ASensorManager_createEventQueue_fake(void *m, void *l, int id,
+                                                  void *cb, void *data) {
+  (void)m; (void)l; (void)id; (void)cb; (void)data; return NULL;
+}
+static int ASensorEventQueue_enableSensor_fake(void *q, void *s) {
+  (void)q; (void)s; return -1;
+}
+static int ASensorEventQueue_disableSensor_fake(void *q, void *s) {
+  (void)q; (void)s; return -1;
+}
+static int ASensorEventQueue_setEventRate_fake(void *q, void *s, int32_t us) {
+  (void)q; (void)s; (void)us; return -1;
+}
+static int ASensorEventQueue_getEvents_fake(void *q, void *ev, size_t n) {
+  (void)q; (void)ev; (void)n; return 0;
+}
+static int ASensor_getMinDelay_fake(void *s) { (void)s; return 0; }
+static void *ALooper_prepare_fake(int opts) { (void)opts; return NULL; }
+
 // pthread stuff
 // have to wrap it since struct sizes are different
 
@@ -702,6 +737,23 @@ DynLibFunction dynlib_functions[] = {
   { "dlsym", (uintptr_t)&dlsym_fake },
   { "dlclose", (uintptr_t)&dlclose_fake },
   { "dlerror", (uintptr_t)&dlerror_fake },
+  { "mprotect", (uintptr_t)&mprotect_fake },
+
+  // ctype helpers used by SaveGameMenu
+  { "isalpha", (uintptr_t)&isalpha },
+  { "isupper", (uintptr_t)&isupper },
+  { "isxdigit", (uintptr_t)&isxdigit },
+
+  // libandroid.so sensor API (JPatch)
+  { "ASensorManager_getInstance", (uintptr_t)&ASensorManager_getInstance_fake },
+  { "ASensorManager_getDefaultSensor", (uintptr_t)&ASensorManager_getDefaultSensor_fake },
+  { "ASensorManager_createEventQueue", (uintptr_t)&ASensorManager_createEventQueue_fake },
+  { "ASensorEventQueue_enableSensor", (uintptr_t)&ASensorEventQueue_enableSensor_fake },
+  { "ASensorEventQueue_disableSensor", (uintptr_t)&ASensorEventQueue_disableSensor_fake },
+  { "ASensorEventQueue_setEventRate", (uintptr_t)&ASensorEventQueue_setEventRate_fake },
+  { "ASensorEventQueue_getEvents", (uintptr_t)&ASensorEventQueue_getEvents_fake },
+  { "ASensor_getMinDelay", (uintptr_t)&ASensor_getMinDelay_fake },
+  { "ALooper_prepare", (uintptr_t)&ALooper_prepare_fake },
 
   // AAssets are emulated over regular files relative to the game dir
   { "AAssetManager_open", (uintptr_t)&AAssetManager_open_fake },
