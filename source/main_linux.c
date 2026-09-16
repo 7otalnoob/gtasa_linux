@@ -8,12 +8,14 @@
 #include <SDL3/SDL.h>
 #include <GLES2/gl2.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 #include "aml_mod.h"
@@ -188,7 +190,46 @@ void hard_exit(void) {
   _exit(0);
 }
 
+// Fires on any hard crash (mods included), prints "which loaded module and
+// offset" instead of a bare, useless address, then dies. Deliberately writes
+// straight to stderr with plain fprintf rather than debugPrintf, so this is
+// visible even on a release build without GTASA_DEBUG_LOG -- a crash is
+// exactly the situation where the debug log is most likely to have been
+// left off. Using fprintf/snprintf here is not strictly async-signal-safe,
+// but this handler only ever runs once, immediately before _exit, so in
+// practice it reliably gets the message out.
+static void crash_handler(int sig, siginfo_t *info, void *ucontext_ptr) {
+  ucontext_t *uc = (ucontext_t *)ucontext_ptr;
+  uintptr_t pc = 0;
+#if defined(__aarch64__)
+  pc = (uintptr_t)uc->uc_mcontext.pc;
+#elif defined(__x86_64__)
+  pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+#else
+  (void)uc;
+#endif
+  uintptr_t off = 0;
+  const char *mod = pc ? so_locate_addr(pc, &off) : NULL;
+  fprintf(stderr,
+          "\nCRASH: signal %d, fault address=%p, pc=%p (%s+0x%lx)\n\n",
+          sig, info->si_addr, (void *)pc, mod ? mod : "<unknown module>",
+          (unsigned long)off);
+  fflush(stderr);
+  _exit(139);
+}
+
+static void install_crash_handler(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_sigaction = crash_handler;
+  sa.sa_flags = SA_SIGINFO;
+  sigaction(SIGSEGV, &sa, NULL);
+  sigaction(SIGBUS, &sa, NULL);
+  sigaction(SIGILL, &sa, NULL);
+}
+
 int main(void) {
+  install_crash_handler();
   setenv("MESA_GLTHREAD", "true", 1);
   setenv("GALLIUM_THREAD", "0", 1);
 

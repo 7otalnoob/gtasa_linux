@@ -66,5 +66,6 @@ int so_unload(so_module *mod);
 
 // dl_iterate_phdr() over all loaded modules; needed by the embedded libunwind
 int so_dl_iterate_phdr(int (*callback)(void *info, size_t size, void *data), void *data);
+const char *so_locate_addr(uintptr_t addr, uintptr_t *offset_out);
 
 #endif

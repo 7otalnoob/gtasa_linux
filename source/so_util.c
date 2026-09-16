@@ -499,3 +499,18 @@ int so_dl_iterate_phdr(int (*callback)(void *info, size_t size, void *data), voi
   }
   return ret;
 }
+
+// Crash-handler helper: which loaded module (if any) does this address fall
+// inside, and at what offset. Lets a SIGSEGV/SIGBUS handler name "mod.so+0x1234"
+// instead of a bare, useless address.
+const char *so_locate_addr(uintptr_t addr, uintptr_t *offset_out) {
+  for (so_module *m = so_list; m; m = m->next) {
+    uintptr_t base = (uintptr_t)m->load_virtbase;
+    if (base && addr >= base && addr < base + m->load_size) {
+      if (offset_out)
+        *offset_out = addr - base;
+      return m->name;
+    }
+  }
+  return NULL;
+}
