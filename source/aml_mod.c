@@ -74,6 +74,7 @@ static int load_one(const char *path) {
     so_unload(&module->so);
     return -1;
   }
+  debugPrintf("AML: %s: is_aml_image OK, relocating\n", path);
 
   // Same pipeline main_linux.c runs for the game image itself: resolve
   // undefined imports (libc/libm/libdl/liblog, plus our dlopen/dlsym shim
@@ -81,11 +82,17 @@ static int load_one(const char *path) {
   // exports via cross-module lookup), lay down final page protections, then
   // run the mod's C++ static initializers.
   so_relocate(&module->so);
+  debugPrintf("AML: %s: relocated, resolving imports\n", path);
   so_resolve(&module->so, dynlib_functions, dynlib_numfunctions, 1);
+  debugPrintf("AML: %s: imports resolved, finalizing\n", path);
   so_finalize(&module->so);
+  debugPrintf("AML: %s: finalized, flushing caches\n", path);
   so_flush_caches(&module->so);
+  debugPrintf("AML: %s: caches flushed, running init_array\n", path);
   so_execute_init_array(&module->so);
+  debugPrintf("AML: %s: init_array done, freeing temp\n", path);
   so_free_temp(&module->so);
+  debugPrintf("AML: %s: temp freed, looking up entry points\n", path);
 
   aml_get_info_fn get_info = (aml_get_info_fn)
       so_try_find_addr_rx(&module->so, "__GetModInfo");
@@ -139,7 +146,11 @@ static void unprotect_game_text(so_module *game) {
                  PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
       debugPrintf("AML: mprotect RWX on game text failed: %s "
                   "(code-patching mods will crash)\n", strerror(errno));
+    else
+      debugPrintf("AML: game text segment %d now RWX (%p, %zu KB)\n", i,
+                  (void *)start, (end - start) / 1024);
   }
+  debugPrintf("AML: unprotect_game_text done\n");
 }
 
 void aml_load_mods(const char *directory, so_module *game) {
