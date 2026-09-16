@@ -442,15 +442,27 @@ static int is_game_so_name(const char *filename) {
 }
 
 void *dlopen_fake(const char *filename, int flags) {
-  if (is_game_so_name(filename))
+  if (is_game_so_name(filename)) {
+    debugPrintf("dlopen(\"%s\") -> game handle\n", filename ? filename : "(null)");
     return GAME_SO_HANDLE;
-  return dlopen(filename, flags);
+  }
+  void *h = dlopen(filename, flags);
+  debugPrintf("dlopen(\"%s\") -> %p%s\n", filename ? filename : "(null)", h,
+              h ? "" : "  <-- FAILED");
+  return h;
 }
 
 void *dlsym_fake(void *handle, const char *symbol) {
-  if (handle == GAME_SO_HANDLE)
-    return (void *)so_try_find_addr_rx(&game_mod, symbol);
-  return dlsym(handle, symbol);
+  if (handle == GAME_SO_HANDLE) {
+    void *addr = (void *)so_try_find_addr_rx(&game_mod, symbol);
+    debugPrintf("dlsym(game, \"%s\") -> %p%s\n", symbol, addr,
+                addr ? "" : "  <-- NOT FOUND");
+    return addr;
+  }
+  void *addr = dlsym(handle, symbol);
+  debugPrintf("dlsym(%p, \"%s\") -> %p%s\n", handle, symbol, addr,
+              addr ? "" : "  <-- NOT FOUND");
+  return addr;
 }
 
 int dlclose_fake(void *handle) {
