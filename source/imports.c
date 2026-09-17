@@ -49,6 +49,7 @@
 
 
 #include "config.h"
+#include "aml_iface.h"
 #include "so_util.h"
 #include "util.h"
 #include "libc_shim.h"
@@ -432,6 +433,10 @@ int __android_log_vprint(int prio, const char *tag, const char *fmt, va_list va)
 // still pull in genuine system libraries if it needs to.
 extern so_module game_mod;
 #define GAME_SO_HANDLE ((void *)&game_mod)
+// Sentinel for the fake "libAML.so" handle -- any non-NULL, non-real-pointer
+// value works since we only ever compare it by identity in dlsym_fake/
+// dlclose_fake below, never dereference it.
+#define AML_SO_HANDLE ((void *)&aml_get_interface)
 
 static int is_game_so_name(const char *filename) {
   if (!filename)
@@ -441,10 +446,22 @@ static int is_game_so_name(const char *filename) {
   return strcmp(base, SO_NAME) == 0 || strcmp(base, "libGTASA.so") == 0;
 }
 
+static int is_aml_so_name(const char *filename) {
+  if (!filename)
+    return 0;
+  const char *base = strrchr(filename, '/');
+  base = base ? base + 1 : filename;
+  return strcmp(base, "libAML.so") == 0;
+}
+
 void *dlopen_fake(const char *filename, int flags) {
   if (is_game_so_name(filename)) {
     debugPrintf("dlopen(\"%s\") -> game handle\n", filename ? filename : "(null)");
     return GAME_SO_HANDLE;
+  }
+  if (is_aml_so_name(filename)) {
+    debugPrintf("dlopen(\"%s\") -> AML shim handle\n", filename);
+    return AML_SO_HANDLE;
   }
   void *h = dlopen(filename, flags);
   debugPrintf("dlopen(\"%s\") -> %p%s\n", filename ? filename : "(null)", h,
@@ -459,6 +476,12 @@ void *dlsym_fake(void *handle, const char *symbol) {
                 addr ? "" : "  <-- NOT FOUND");
     return addr;
   }
+  if (handle == AML_SO_HANDLE) {
+    if (symbol && strcmp(symbol, "GetInterface") == 0)
+      return (void *)&aml_get_interface;
+    debugPrintf("dlsym(AML shim, \"%s\") -> NOT FOUND\n", symbol);
+    return NULL;
+  }
   void *addr = dlsym(handle, symbol);
   debugPrintf("dlsym(%p, \"%s\") -> %p%s\n", handle, symbol, addr,
               addr ? "" : "  <-- NOT FOUND");
@@ -466,7 +489,7 @@ void *dlsym_fake(void *handle, const char *symbol) {
 }
 
 int dlclose_fake(void *handle) {
-  if (handle == GAME_SO_HANDLE)
+  if (handle == GAME_SO_HANDLE || handle == AML_SO_HANDLE)
     return 0;
   return dlclose(handle);
 }
