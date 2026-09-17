@@ -44,6 +44,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -133,6 +134,95 @@ static uintptr_t iaml_GetSym_handle(This t, void *handle, const char *sym) {
 static uintptr_t iaml_GetSym_addr(This t, uintptr_t lib_addr, const char *sym) {
   (void)t; (void)lib_addr;
   return so_try_find_addr_rx(&game_mod, sym);
+}
+
+// -- pattern scanning / pointer chains --------------------------------------
+//
+// Matches AndroidModLoader's own src/aml.cpp ParsePattern/ComparePattern
+// exactly: pattern is whitespace-separated hex byte tokens, "?" or "??" is
+// a wildcard byte. This is almost certainly the missing piece for mods
+// that load and run cleanly but don't visibly do anything -- they use
+// PatternScan to locate their hook targets by byte signature (so they
+// still work across small game-version differences) instead of a fixed
+// offset, and gracefully skip installing the hook when it returns 0.
+#define MAX_PATTERN_BYTES 512
+
+static size_t parse_pattern(const char *pattern, int *out, size_t max) {
+  size_t n = 0;
+  const char *p = pattern;
+  while (p && *p && n < max) {
+    while (*p == ' ' || *p == '\t')
+      p++;
+    if (!*p)
+      break;
+    const char *start = p;
+    while (*p && *p != ' ' && *p != '\t')
+      p++;
+    size_t len = (size_t)(p - start);
+    if ((len == 1 && start[0] == '?') || (len == 2 && start[0] == '?' && start[1] == '?')) {
+      out[n++] = -1;
+    } else {
+      char buf[8];
+      if (len >= sizeof(buf))
+        len = sizeof(buf) - 1;
+      memcpy(buf, start, len);
+      buf[len] = 0;
+      out[n++] = (int)strtoul(buf, NULL, 16);
+    }
+  }
+  return n;
+}
+
+static int compare_pattern(const uint8_t *data, const int *pattern, size_t len) {
+  for (size_t i = 0; i < len; i++)
+    if (pattern[i] != -1 && data[i] != (uint8_t)pattern[i])
+      return 0;
+  return 1;
+}
+
+static uintptr_t iaml_PatternScan_range(This t, const char *pattern, uintptr_t libStart, uintptr_t scanLen) {
+  (void)t;
+  if (!pattern || !libStart || !scanLen)
+    return 0;
+  int parsed[MAX_PATTERN_BYTES];
+  size_t patLen = parse_pattern(pattern, parsed, MAX_PATTERN_BYTES);
+  if (!patLen || scanLen < patLen)
+    return 0;
+  const uint8_t *scanStart = (const uint8_t *)libStart;
+  size_t searchLen = (size_t)scanLen - patLen;
+  for (size_t i = 0; i <= searchLen; i++)
+    if (compare_pattern(scanStart + i, parsed, patLen))
+      return (uintptr_t)(scanStart + i);
+  return 0;
+}
+
+static uintptr_t iaml_PatternScan_lib(This t, const char *pattern, const char *soLib) {
+  uintptr_t libStart = iaml_GetLib(t, soLib);
+  uintptr_t scanLen = iaml_GetLibLength(t, soLib);
+  return iaml_PatternScan_range(t, pattern, libStart, scanLen);
+}
+
+static bool iaml_ComparePattern(This t, uintptr_t addr, const char *pattern) {
+  (void)t;
+  if (!addr || !pattern)
+    return false;
+  int parsed[MAX_PATTERN_BYTES];
+  size_t patLen = parse_pattern(pattern, parsed, MAX_PATTERN_BYTES);
+  if (!patLen)
+    return false;
+  return compare_pattern((const uint8_t *)addr, parsed, patLen) != 0;
+}
+
+static uintptr_t iaml_ReadPointerChain(This t, uintptr_t baseAddr, const int *offsets, size_t count) {
+  (void)t;
+  uintptr_t cur = baseAddr;
+  for (size_t i = 0; i < count; i++) {
+    if (!cur)
+      return 0;
+    cur = *(uintptr_t *)cur;
+    cur += (uintptr_t)offsets[i];
+  }
+  return cur;
 }
 
 // The game's text segments were already made RWX up front by
@@ -287,8 +377,8 @@ static void *const iaml_vtable[130] = {
   (void *)stub_0,                       //  19  Redirect
   (void *)stub_v,                       //  20  PlaceBL
   (void *)stub_v,                       //  21  PlaceBLX
-  (void *)stub_0,                       //  22  PatternScan(pattern, soLib)
-  (void *)stub_0,                       //  23  PatternScan(pattern, start, len)
+  (void *)iaml_PatternScan_lib,         //  22  PatternScan(pattern, soLib)
+  (void *)iaml_PatternScan_range,       //  23  PatternScan(pattern, start, len)
 
   /* AML 1.0.1 */
   (void *)stub_v,                       //  24  PatchForThumb
@@ -378,9 +468,9 @@ static void *const iaml_vtable[130] = {
   (void *)stub_v,                       //  90  GetDisplaySize
   (void *)stub_0,                       //  91  AllocateMemory
   (void *)stub_0,                       //  92  FreeMemory
-  (void *)stub_0,                       //  93  ReadPointerChain
+  (void *)iaml_ReadPointerChain,        //  93  ReadPointerChain(base, {offsets}) -- initializer_list decomposed as (const int*, size_t) in X2/X3
   (void *)stub_vec0,                    //  94  FindAllPatterns (hidden-return)
-  (void *)stub_0,                       //  95  ComparePattern
+  (void *)iaml_ComparePattern,          //  95  ComparePattern
   (void *)stub_v,                       //  96  ShowDialog
   (void *)iaml_FileExists,              //  97
   (void *)iaml_FileSize,                //  98
