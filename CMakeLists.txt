@@ -21,6 +21,7 @@ pkg_check_modules(MPG123 REQUIRED IMPORTED_TARGET libmpg123)
 
 add_executable(${GAME_BINARY_NAME}
     source/aml_mod.c
+    source/aml_iface.c
     source/config.c
     source/error_linux.c
     source/imports.c
