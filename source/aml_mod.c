@@ -94,16 +94,19 @@ static int load_one(const char *path) {
   so_free_temp(&module->so);
   debugPrintf("AML: %s: temp freed, looking up entry points\n", path);
 
+  // Only __GetModInfo is mandatory -- it's how AML identifies a mod at all.
+  // OnModPreLoad/OnModLoad/OnAllModsLoaded are each a separate opt-in macro
+  // in mod/amlmod.h (ON_MOD_PRELOAD()/ON_MOD_LOAD()/ON_ALL_MODS_LOADED()); a
+  // mod only exports the ones it actually defined, so requiring all three
+  // (as this originally did) skipped every mod that didn't use every macro.
   aml_get_info_fn get_info = (aml_get_info_fn)
       so_try_find_addr_rx(&module->so, "__GetModInfo");
   aml_callback_fn pre_load = (aml_callback_fn)
       so_try_find_addr_rx(&module->so, "OnModPreLoad");
   aml_callback_fn on_load = (aml_callback_fn)
       so_try_find_addr_rx(&module->so, "OnModLoad");
-  aml_callback_fn all_loaded = (aml_callback_fn)
-      so_try_find_addr_rx(&module->so, "OnAllModsLoaded");
-  if (!get_info || !pre_load || !on_load || !all_loaded) {
-    debugPrintf("AML: missing required exports, skipping %s\n", path);
+  if (!get_info) {
+    debugPrintf("AML: no __GetModInfo export, skipping %s\n", path);
     so_unload(&module->so);
     return -1;
   }
@@ -117,9 +120,14 @@ static int load_one(const char *path) {
   strlcpy(module->path, path, sizeof(module->path));
   debugPrintf("AML: loading %s (%s %s by %s)\n", path, info->name,
               info->version, info->author);
-  pre_load();
-  on_load();
-  (void)all_loaded;
+  if (pre_load)
+    pre_load();
+  else
+    debugPrintf("AML: %s: no OnModPreLoad export (ok, optional)\n", path);
+  if (on_load)
+    on_load();
+  else
+    debugPrintf("AML: %s: no OnModLoad export (ok, optional)\n", path);
   g_module_count++;
   return 0;
 }
