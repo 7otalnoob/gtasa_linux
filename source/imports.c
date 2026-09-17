@@ -479,6 +479,8 @@ void *dlsym_fake(void *handle, const char *symbol) {
   if (handle == AML_SO_HANDLE) {
     if (symbol && strcmp(symbol, "GetInterface") == 0)
       return (void *)&aml_get_interface;
+    if (symbol && strcmp(symbol, "CreateInterface") == 0)
+      return (void *)&aml_register_interface;
     debugPrintf("dlsym(AML shim, \"%s\") -> NOT FOUND\n", symbol);
     return NULL;
   }

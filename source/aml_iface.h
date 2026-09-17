@@ -12,4 +12,9 @@
 // the real AML SDK works against this without any changes.
 void *aml_get_interface(const char *name);
 
+// Backs "CreateInterface" (mod/interface.h's RegisterInterface()): a mod
+// publishes pInterface under szInterfaceName so a later GetInterface() call
+// -- from this or any other mod -- can retrieve it.
+void aml_register_interface(const char *name, void *ptr);
+
 #endif

@@ -31,6 +31,8 @@ typedef void (*aml_callback_fn)(void);
 typedef struct {
   so_module so;
   char path[PATH_MAX];
+  aml_callback_fn pre_load;
+  aml_callback_fn on_load;
 } aml_module;
 
 static aml_module g_modules[AML_MAX_MODULES];
@@ -57,6 +59,16 @@ static int has_suffix(const char *name, const char *suffix) {
   return n >= s && strcmp(name + n - s, suffix) == 0;
 }
 
+// Maps, relocates and runs static initializers for one mod, and looks up
+// its entry points -- but does NOT call OnModPreLoad/OnModLoad yet. Real
+// AML (src/modslist.cpp) runs those in two separate all-mods passes
+// (ProcessPreLoading() then ProcessLoading()), specifically so a mod that
+// registers an interface in OnModPreLoad (e.g. SAUtils, via CreateInterface)
+// has already done so by the time any mod's OnModLoad runs and tries to
+// GetInterface() it -- regardless of filesystem/alphabetical load order.
+// Calling pre_load+on_load back to back per mod, as this originally did,
+// broke that guarantee for any mod loaded after the one providing an
+// interface it depends on.
 static int load_one(const char *path) {
   if (g_module_count >= AML_MAX_MODULES) {
     debugPrintf("AML: module limit reached, skipping %s\n", path);
@@ -101,10 +113,6 @@ static int load_one(const char *path) {
   // (as this originally did) skipped every mod that didn't use every macro.
   aml_get_info_fn get_info = (aml_get_info_fn)
       so_try_find_addr_rx(&module->so, "__GetModInfo");
-  aml_callback_fn pre_load = (aml_callback_fn)
-      so_try_find_addr_rx(&module->so, "OnModPreLoad");
-  aml_callback_fn on_load = (aml_callback_fn)
-      so_try_find_addr_rx(&module->so, "OnModLoad");
   if (!get_info) {
     debugPrintf("AML: no __GetModInfo export, skipping %s\n", path);
     so_unload(&module->so);
@@ -118,16 +126,12 @@ static int load_one(const char *path) {
     return -1;
   }
   strlcpy(module->path, path, sizeof(module->path));
-  debugPrintf("AML: loading %s (%s %s by %s)\n", path, info->name,
+  debugPrintf("AML: loaded %s (%s %s by %s)\n", path, info->name,
               info->version, info->author);
-  if (pre_load)
-    pre_load();
-  else
-    debugPrintf("AML: %s: no OnModPreLoad export (ok, optional)\n", path);
-  if (on_load)
-    on_load();
-  else
-    debugPrintf("AML: %s: no OnModLoad export (ok, optional)\n", path);
+  module->pre_load = (aml_callback_fn)
+      so_try_find_addr_rx(&module->so, "OnModPreLoad");
+  module->on_load = (aml_callback_fn)
+      so_try_find_addr_rx(&module->so, "OnModLoad");
   g_module_count++;
   return 0;
 }
@@ -197,11 +201,31 @@ void aml_load_mods(const char *directory, so_module *game) {
       load_one(path);
     free(names[i]);
   }
+  free(names);
+
+  // Phase 1/3: OnModPreLoad for every mod, in order (ModsList::ProcessPreLoading).
+  for (size_t i = 0; i < g_module_count; i++) {
+    if (g_modules[i].pre_load)
+      g_modules[i].pre_load();
+    else
+      debugPrintf("AML: %s: no OnModPreLoad export (ok, optional)\n",
+                  g_modules[i].path);
+  }
+  // Phase 2/3: OnModLoad for every mod, in order (ModsList::ProcessLoading).
+  // By now every mod that registers an interface in its OnModPreLoad (like
+  // SAUtils does) has already done so, regardless of load order.
+  for (size_t i = 0; i < g_module_count; i++) {
+    if (g_modules[i].on_load)
+      g_modules[i].on_load();
+    else
+      debugPrintf("AML: %s: no OnModLoad export (ok, optional)\n",
+                  g_modules[i].path);
+  }
+  // Phase 3/3: OnAllModsLoaded for every mod, in order.
   for (size_t i = 0; i < g_module_count; i++) {
     aml_callback_fn all_loaded = (aml_callback_fn)
         so_try_find_addr_rx(&g_modules[i].so, "OnAllModsLoaded");
     if (all_loaded)
       all_loaded();
   }
-  free(names);
 }

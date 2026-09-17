@@ -686,11 +686,55 @@ static void *const icfg_vtable[10] = {
 };
 static const struct { void *const *vtable; } g_icfg_obj = { icfg_vtable };
 
+// -- mod-registered interfaces ("CreateInterface") ---------------------------
+//
+// mod/interface.h's RegisterInterface() does dlsym(aml, "CreateInterface")
+// then calls it as void CreateInterface(const char*, void*) -- this is how
+// a mod (e.g. SAUtils) publishes its own interface for OTHER mods to fetch
+// later via GetInterface("SAUtils"). Matches real AML's src/interface.cpp
+// (InterfaceSys::Register/Get) with a simple fixed-size table instead of a
+// std::map, since we don't need anything fancier here.
+#define AML_MAX_REGISTERED_INTERFACES 32
+typedef struct {
+  char name[64];
+  void *ptr;
+} RegisteredInterface;
+static RegisteredInterface g_registered_ifaces[AML_MAX_REGISTERED_INTERFACES];
+static int g_registered_iface_count;
+
+void aml_register_interface(const char *name, void *ptr) {
+  if (!name || !name[0])
+    return;
+  debugPrintf("AML iface: CreateInterface(\"%s\", %p)\n", name, ptr);
+  for (int i = 0; i < g_registered_iface_count; i++) {
+    if (strcmp(g_registered_ifaces[i].name, name) == 0) {
+      g_registered_ifaces[i].ptr = ptr; // re-registration overwrites, like real AML
+      return;
+    }
+  }
+  if (g_registered_iface_count < AML_MAX_REGISTERED_INTERFACES) {
+    RegisteredInterface *e = &g_registered_ifaces[g_registered_iface_count++];
+    strlcpy(e->name, name, sizeof(e->name));
+    e->ptr = ptr;
+  } else {
+    debugPrintf("AML iface: interface table full, dropping \"%s\"\n", name);
+  }
+}
+
+static void *aml_get_registered_interface(const char *name) {
+  if (!name)
+    return NULL;
+  for (int i = 0; i < g_registered_iface_count; i++)
+    if (strcmp(g_registered_ifaces[i].name, name) == 0)
+      return g_registered_ifaces[i].ptr;
+  return NULL;
+}
+
 void *aml_get_interface(const char *name) {
   debugPrintf("AML iface: GetInterface(\"%s\")\n", name ? name : "(null)");
   if (name && strcmp(name, "AMLInterface") == 0)
     return (void *)&g_iaml_obj;
   if (name && strcmp(name, "AMLConfig") == 0)
     return (void *)&g_icfg_obj;
-  return NULL; // e.g. any per-mod custom interface nobody has registered
+  return aml_get_registered_interface(name);
 }
