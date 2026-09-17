@@ -512,9 +512,185 @@ static void *const iaml_vtable[130] = {
 
 static const struct { void *const *vtable; } g_iaml_obj = { iaml_vtable };
 
+// -- ICFG ("AMLConfig" interface) -------------------------------------------
+//
+// mod/config.cpp's Config::Config() does:
+//   m_pICFG = (ICFG*)GetInterface("AMLConfig");
+//   m_iniMyConfig = m_pICFG->InitIniPointer();     <-- no null-check!
+// so if GetInterface("AMLConfig") returns NULL, that second line
+// dereferences a null vtable pointer immediately -- this is the crash seen
+// after AMLInterface was already working. Real AML backs this with a
+// JINI-based .ini parser (src/icfg.cpp); this is a small from-scratch
+// equivalent using a fixed-size array of {section,key,value} triples,
+// matching real CFG's observable behaviour: GetValueFrom's "unsafe" (5-arg)
+// overload NEVER returns NULL, only "" when not found, since callers check
+// tryToGetValue[0] without a null-check of their own.
+#define ICFG_MAX_ENTRIES 256
+typedef struct {
+  char section[64];
+  char key[64];
+  char value[256];
+  int used;
+} IcfgEntry;
+typedef struct {
+  IcfgEntry entries[ICFG_MAX_ENTRIES];
+  int count;
+  char path[384];
+} IcfgStore;
+
+static void *icfg_InitIniPointer(This t) {
+  (void)t;
+  IcfgStore *s = (IcfgStore *)calloc(1, sizeof(IcfgStore));
+  return s;
+}
+
+static void icfg_ParseInputStream(This t, void *ini, const char *filename) {
+  (void)t;
+  IcfgStore *s = (IcfgStore *)ini;
+  if (!s || !filename)
+    return;
+  snprintf(s->path, sizeof(s->path), "%s.ini", filename);
+  FILE *f = fopen(s->path, "r");
+  if (!f)
+    return;
+  char line[512], section[64] = "";
+  while (fgets(line, sizeof(line), f) && s->count < ICFG_MAX_ENTRIES) {
+    char *p = line;
+    while (*p == ' ' || *p == '\t')
+      p++;
+    size_t len = strlen(p);
+    while (len && (p[len - 1] == '\n' || p[len - 1] == '\r' || p[len - 1] == ' '))
+      p[--len] = 0;
+    if (!len || p[0] == ';' || p[0] == '#')
+      continue;
+    if (p[0] == '[' && p[len - 1] == ']') {
+      p[len - 1] = 0;
+      strlcpy(section, p + 1, sizeof(section));
+      continue;
+    }
+    char *eq = strchr(p, '=');
+    if (!eq)
+      continue;
+    *eq = 0;
+    IcfgEntry *e = &s->entries[s->count++];
+    strlcpy(e->section, section, sizeof(e->section));
+    strlcpy(e->key, p, sizeof(e->key));
+    strlcpy(e->value, eq + 1, sizeof(e->value));
+    e->used = 1;
+  }
+  fclose(f);
+}
+
+static void icfg_GenerateToOutputStream(This t, void *ini, const char *filename) {
+  (void)t;
+  IcfgStore *s = (IcfgStore *)ini;
+  if (!s)
+    return;
+  if (filename)
+    snprintf(s->path, sizeof(s->path), "%s.ini", filename);
+  if (!s->path[0])
+    return;
+  FILE *f = fopen(s->path, "w");
+  if (!f)
+    return;
+  char cur_section[64] = "\x01"; // sentinel that can never match a real one
+  for (int i = 0; i < s->count; i++) {
+    IcfgEntry *e = &s->entries[i];
+    if (!e->used)
+      continue;
+    if (strcmp(cur_section, e->section) != 0) {
+      fprintf(f, "[%s]\n", e->section);
+      strlcpy(cur_section, e->section, sizeof(cur_section));
+    }
+    fprintf(f, "%s=%s\n", e->key, e->value);
+  }
+  fclose(f);
+}
+
+static IcfgEntry *icfg_find(IcfgStore *s, const char *section, const char *key) {
+  if (!s || !section || !key)
+    return NULL;
+  for (int i = 0; i < s->count; i++)
+    if (s->entries[i].used && strcmp(s->entries[i].section, section) == 0 &&
+        strcmp(s->entries[i].key, key) == 0)
+      return &s->entries[i];
+  return NULL;
+}
+
+static const char *icfg_GetValueFrom(This t, void *ini, const char *section, const char *key) {
+  (void)t;
+  IcfgEntry *e = icfg_find((IcfgStore *)ini, section, key);
+  return e ? e->value : ""; // never NULL: config.cpp reads [0] unconditionally
+}
+
+static void icfg_SetValueTo(This t, void *ini, const char *section, const char *key, const char *value) {
+  (void)t;
+  IcfgStore *s = (IcfgStore *)ini;
+  if (!s || !section || !key || !value)
+    return;
+  IcfgEntry *e = icfg_find(s, section, key);
+  if (!e && s->count < ICFG_MAX_ENTRIES)
+    e = &s->entries[s->count++];
+  if (!e)
+    return;
+  strlcpy(e->section, section, sizeof(e->section));
+  strlcpy(e->key, key, sizeof(e->key));
+  strlcpy(e->value, value, sizeof(e->value));
+  e->used = 1;
+}
+
+static bool icfg_GetValueFromSafe(This t, void *ini, const char *section, const char *key, char *out, int maxLen) {
+  (void)t;
+  IcfgEntry *e = icfg_find((IcfgStore *)ini, section, key);
+  if (!e)
+    return false;
+  strlcpy(out, e->value, (size_t)maxLen);
+  return true;
+}
+
+static bool icfg_HasSection(This t, void *ini, const char *section) {
+  (void)t;
+  IcfgStore *s = (IcfgStore *)ini;
+  if (!s || !section)
+    return false;
+  for (int i = 0; i < s->count; i++)
+    if (s->entries[i].used && strcmp(s->entries[i].section, section) == 0)
+      return true;
+  return false;
+}
+static bool icfg_HasKey(This t, void *ini, const char *section, const char *key) {
+  (void)t;
+  return icfg_find((IcfgStore *)ini, section, key) != NULL;
+}
+static bool icfg_HasSectionComment(This t, void *ini, const char *section) {
+  (void)t; (void)ini; (void)section;
+  return false; // comments aren't tracked by this shim
+}
+static bool icfg_HasKeyComment(This t, void *ini, const char *section, const char *key) {
+  (void)t; (void)ini; (void)section; (void)key;
+  return false;
+}
+
+// Exact order of mod/icfg.h's ICFG class (10 virtuals).
+static void *const icfg_vtable[10] = {
+  (void *)icfg_InitIniPointer,
+  (void *)icfg_ParseInputStream,
+  (void *)icfg_GenerateToOutputStream,
+  (void *)icfg_GetValueFrom,
+  (void *)icfg_SetValueTo,
+  (void *)icfg_GetValueFromSafe,
+  (void *)icfg_HasSection,
+  (void *)icfg_HasKey,
+  (void *)icfg_HasSectionComment,
+  (void *)icfg_HasKeyComment,
+};
+static const struct { void *const *vtable; } g_icfg_obj = { icfg_vtable };
+
 void *aml_get_interface(const char *name) {
   debugPrintf("AML iface: GetInterface(\"%s\")\n", name ? name : "(null)");
   if (name && strcmp(name, "AMLInterface") == 0)
     return (void *)&g_iaml_obj;
+  if (name && strcmp(name, "AMLConfig") == 0)
+    return (void *)&g_icfg_obj;
   return NULL; // e.g. any per-mod custom interface nobody has registered
 }
